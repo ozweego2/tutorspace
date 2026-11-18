@@ -1,0 +1,13 @@
+import {DatabaseSync} from 'node:sqlite';
+import {readFileSync} from 'node:fs';
+import assert from 'node:assert/strict';
+const db=new DatabaseSync(':memory:');
+for(const name of ['0000_purple_omega_flight','0001_tutor_integrity'])db.exec(readFileSync(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
+db.exec("INSERT INTO students(id,owner,name,notes,created) VALUES('demo','a','Алексей · пример','[TutorSpace demo] Демонстрационный ученик','2026-11-01'),('real','a','Анна','','2026-11-01'); INSERT INTO lessons(id,owner,student_id,start,end,duration,price,status,created) VALUES('dl','a','demo','2026-11-20T14:00:00.000Z','2026-11-20T15:00:00.000Z',60,80000,'planned','2026-11-01'),('rl','a','real','2026-11-21T14:00:00.000Z','2026-11-21T15:00:00.000Z',60,80000,'planned','2026-11-01');");
+db.exec(readFileSync(new URL('../drizzle/0002_yellow_mesmero.sql',import.meta.url),'utf8'));
+assert.equal(db.prepare("SELECT status FROM lessons WHERE id='dl'").get().status,'cancelled');
+assert.equal(db.prepare("SELECT archived FROM students WHERE id='demo'").get().archived,1);
+assert.equal(db.prepare("SELECT status FROM lessons WHERE id='rl'").get().status,'planned');
+assert.equal(db.prepare("SELECT archived FROM students WHERE id='real'").get().archived,0);
+assert.equal(db.prepare("SELECT subject FROM students WHERE id='real'").get().subject,'Математика');
+db.close();console.log('Migration: demonstration slots released; real student and lesson preserved.');

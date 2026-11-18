@@ -4,7 +4,7 @@ import { transformSync } from 'esbuild';
 import assert from 'node:assert/strict';
 const sqlite=new DatabaseSync(':memory:');
 sqlite.exec('PRAGMA foreign_keys=ON');
-for(const f of ['0000_purple_omega_flight.sql','0001_tutor_integrity.sql'])sqlite.exec(readFileSync(new URL('../drizzle/'+f,import.meta.url),'utf8'));
+for(const f of ['0000_purple_omega_flight.sql','0001_tutor_integrity.sql','0002_yellow_mesmero.sql'])sqlite.exec(readFileSync(new URL('../drizzle/'+f,import.meta.url),'utf8'));
 const db={prepare(sql){let params=[];return{bind(...v){params=v;return this},async first(){return sqlite.prepare(sql).get(...params)||null},async all(){return{results:sqlite.prepare(sql).all(...params)}},async run(){return{success:true,meta:sqlite.prepare(sql).run(...params)}}}},async batch(statements){sqlite.exec('BEGIN');try{const results=[];for(const s of statements){try{results.push(await s.all())}catch(e){throw e}}sqlite.exec('COMMIT');return results}catch(e){sqlite.exec('ROLLBACK');throw e}}};
 let owner='teacher-a';
 const source=readFileSync(new URL('../app/api/data/route.ts',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
@@ -21,6 +21,8 @@ await test('AT-01 create student, UUID, trim',async()=>{s=await save('students',
 await test('AT-02 reject blank and too-short name',async()=>{assert.equal((await save('students',{name:'   '})).status,400);assert.equal((await save('students',{name:'А'})).status,400)});
 await test('AT-03 edit persists',async()=>{assert.equal((await save('students',{name:'Иванов Дмитрий',goal:'ОГЭ',rate:80000},{id:s.id})).status,200);assert.equal((await(await GET()).json()).students[0].goal,'ОГЭ')});
 const lesson={studentId:s.id,start:'2026-11-20T14:00:00Z',duration:60,price:80000,status:'planned',subject:'Математика',topic:'Квадратные уравнения'};
+await test('Four-field student persists subject, grade and rate',async()=>{const r=await save('students',{name:'Анна',subject:'Физика',level:'10 класс',rate:120000});assert.equal(r.status,200);const x=(await(await GET()).json()).students.find(x=>x.id===r.id);assert.equal(x.subject,'Физика');assert.equal(x.level,'10 класс');assert.equal(x.rate,120000);assert.equal(x.phone,'')});
+await test('Dark theme persists and legacy appearance saves preserve it',async()=>{const prefs={name:'Учитель',rate:80000,accent:'cobalt',font:'sans',mode:'dark'};assert.equal((await call({action:'preferences',data:prefs})).status,200);assert.equal((await(await GET()).json()).preferences.mode,'dark');const {mode,...legacy}=prefs;assert.equal((await call({action:'preferences',data:legacy})).status,200);assert.equal((await(await GET()).json()).preferences.mode,'dark');assert.equal((await call({action:'preferences',data:{...prefs,mode:'bad'}})).status,400)});
 await test('AT-05 create lesson',async()=>{l=await save('lessons',lesson);assert.equal(l.status,200)});
 await test('AT-06 overlap rejected and adjacent allowed',async()=>{assert.equal((await save('lessons',{...lesson,start:'2026-11-20T14:30:00Z'})).status,400);assert.equal((await save('lessons',{...lesson,start:'2026-11-20T15:00:00Z'})).status,200)});
 await test('AT-07 cancellation excludes charge',async()=>{assert.equal((await save('lessons',{...lesson,status:'cancelled'},{id:l.id})).status,200);const d=await(await GET()).json();assert.equal(d.lessons.filter(x=>x.status==='done').reduce((a,x)=>a+x.price,0),0)});

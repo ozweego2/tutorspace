@@ -3,7 +3,7 @@ import { getChatGPTUser } from '../../chatgpt-auth';
 import { tables, type Kind, type Row } from '../../../lib/tutor';
 export const dynamic='force-dynamic';
 const json=(x:any,status=200)=>Response.json(x,{status,headers:{'Cache-Control':'no-store'}});
-const mappings:Record<Kind,string[]>={students:['name','phone','level','goal','notes','rate','archived'],lessons:['studentId','start','end','duration','subject','topic','status','price','notes','series'],homework:['studentId','lessonId','title','description','due','status','review','reviewed','link'],progress:['studentId','date','topic','type','score','notes'],payments:['studentId','date','amount','notes']};
+const mappings:Record<Kind,string[]>={students:['name','subject','phone','level','goal','notes','rate','archived'],lessons:['studentId','start','end','duration','subject','topic','status','price','notes','series'],homework:['studentId','lessonId','title','description','due','status','review','reviewed','link'],progress:['studentId','date','topic','type','score','notes'],payments:['studentId','date','amount','notes']};
 const sqlName=(x:string)=>x.replace(/[A-Z]/g,c=>'_'+c.toLowerCase());
 function decode(r:Row){return Object.fromEntries(Object.entries(r).filter(([k])=>k!=='owner').map(([k,v])=>[k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase()),v]))}
 const need=(ok:any,message:string)=>{if(!ok)throw new Error(message)};
@@ -14,7 +14,7 @@ function validate(kind:Kind,d:Row,old:Row|null):Row{
  const created=old?.created||new Date().toISOString(),common={notes:text(d.notes)};
  if(kind==='students'){
   const name=String(d.name??'').trim();need(name.length>=2&&name.length<=120&&!/[\p{Cc}\p{Cf}]/u.test(name),'Имя должно содержать от 2 до 120 печатных символов');
-  return {...common,name,phone:text(d.phone,60),level:text(d.level,120),goal:text(d.goal),rate:integer(d.rate??80000,0,100000000,'Укажите корректную часовую ставку'),archived:d.archived?1:0};
+  return {...common,name,subject:text(d.subject,120)||old?.subject||'Математика',phone:text(d.phone,60),level:text(d.level,120),goal:text(d.goal),rate:integer(d.rate??80000,0,100000000,'Укажите корректную часовую ставку'),archived:d.archived?1:0};
  }
  const studentId=text(d.studentId,60);need(studentId,'Выберите ученика');
  if(kind==='lessons'){
@@ -34,14 +34,14 @@ export async function GET(){
  const user=await getChatGPTUser();if(!user)return json({error:'Требуется вход'},401);
  try{const db=env.DB!,names=[...Object.keys(tables),'attachments'];const results=await db.batch(names.map(t=>db.prepare(`SELECT * FROM ${t} WHERE owner=?`).bind(user.userId)));
   const prefs=await db.prepare('SELECT * FROM preferences WHERE owner=?').bind(user.userId).first<Row>();
-  return json({...Object.fromEntries(names.map((t,i)=>[t,results[i].results.map(r=>decode(r as Row))])),preferences:prefs?decode(prefs):{name:user.fullName||'Преподаватель',rate:80000,accent:'forest',font:'sans'}});
+  return json({...Object.fromEntries(names.map((t,i)=>[t,results[i].results.map(r=>decode(r as Row))])),preferences:prefs?decode(prefs):{name:user.fullName||'Преподаватель',rate:80000,accent:'forest',font:'sans',mode:'light'}});
  }catch(e){console.error(e);return json({error:'Не удалось загрузить записи. Попробуйте еще раз.'},500)}
 }
 export async function POST(req:Request){
  const user=await getChatGPTUser();if(!user)return json({error:'Требуется вход'},401);if(req.headers.get('origin')&&req.headers.get('origin')!==new URL(req.url).origin)return json({error:'Запрос отклонен'},403);
  try{
   const db=env.DB!,b=await req.json() as Row,owner=user.userId;
-  if(b.action==='preferences'){const d=b.data||{},rate=integer(d.rate,0,100000000,'Некорректная ставка');need(['forest','cobalt','plum'].includes(d.accent),'Неизвестная тема');need(['sans','serif'].includes(d.font),'Неизвестный шрифт');await db.prepare('INSERT INTO preferences(owner,name,rate,accent,font) VALUES(?,?,?,?,?) ON CONFLICT(owner) DO UPDATE SET name=excluded.name,rate=excluded.rate,accent=excluded.accent,font=excluded.font').bind(owner,text(d.name,120)||'Преподаватель',rate,d.accent,d.font).run();return json({ok:true})}
+  if(b.action==='preferences'){const d=b.data||{},rate=integer(d.rate,0,100000000,'Некорректная ставка');need(['forest','cobalt','plum'].includes(d.accent),'Неизвестная тема');need(['sans','serif'].includes(d.font),'Неизвестный шрифт');const previous=await db.prepare('SELECT mode FROM preferences WHERE owner=?').bind(owner).first<Row>();const mode=d.mode??previous?.mode??'light';need(['light','dark'].includes(mode),'Неизвестный режим оформления');await db.prepare('INSERT INTO preferences(owner,name,rate,accent,font,mode) VALUES(?,?,?,?,?,?) ON CONFLICT(owner) DO UPDATE SET name=excluded.name,rate=excluded.rate,accent=excluded.accent,font=excluded.font,mode=excluded.mode').bind(owner,text(d.name,120)||'Преподаватель',rate,d.accent,d.font,mode).run();return json({ok:true})}
   need(typeof b.kind==='string'&&Object.hasOwn(tables,b.kind),'Неизвестный раздел');const kind=b.kind as Kind,table=tables[kind];need(['save','delete'].includes(b.action),'Неизвестное действие');const id=b.id||b.requestId||crypto.randomUUID();need(/^[a-zA-Z0-9-]{1,80}$/.test(id),'Некорректный идентификатор');
   const existing=await db.prepare(`SELECT * FROM ${table} WHERE id=? AND owner=?`).bind(id,owner).first<Row>();if(b.id&&!existing)return json({error:'Запись не найдена'},404);
   if(existing&&!b.id&&b.action==='save')return json({ok:true,id,count:1});
