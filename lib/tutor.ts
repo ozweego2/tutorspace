@@ -3,7 +3,7 @@ export type Kind=keyof typeof tables;
 export type Row=Record<string,any>;
 export type Data={students:Row[];lessons:Row[];homework:Row[];progress:Row[];payments:Row[];attachments:Row[];preferences:Row};
 export const labels:Record<string,string>={planned:'Запланировано',done:'Проведено',cancelled:'Отменено',assigned:'Выдано',completed:'Выполнено',reviewed:'Проверено'};
-export const money=(n:number)=>new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:n%100?2:0}).format(n/100);
+export const money=(n:number)=>new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:n%100?2:0}).format((n||0)/100);
 export function balance(d:Data,id:string){return d.payments.filter(x=>x.studentId===id).reduce((a,x)=>a+x.amount,0)-d.lessons.filter(x=>x.studentId===id&&x.status==='done').reduce((a,x)=>a+x.price,0)}
 export function localDate(d:Date){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 export function localTime(d:Date){return `${localDate(d)}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`}

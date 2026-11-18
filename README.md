@@ -1,6 +1,6 @@
 # TutorSpace
 
-Рабочее пространство репетитора: календарь на месяцы, ученики, домашние задания с вложениями, результаты, оплаты и баланс. Версия 1.0.0.
+Рабочее пространство репетитора: календарь на месяцы, ученики, домашние задания с вложениями, результаты, оплаты и баланс. Версия 1.1.0.
 
 ## Быстрый запуск разработки
 
@@ -20,6 +20,7 @@ npm run dev
 
 ```powershell
 node scripts/test-tutor.mjs
+node scripts/test-routes.mjs
 node node_modules/typescript/bin/tsc --noEmit
 npm run build
 ```
@@ -31,6 +32,8 @@ npm run build
 - docs/USER_GUIDE.md — пользовательские сценарии.
 - docs/ARCHITECTURE.md — устройство, API и отличия от исходного ТЗ.
 - docs/VERIFICATION.md — результаты проверок и ограничения.
+- docs/VERIFICATION_V1_1.md — проверка исправлений по обратной связи.
+- docs/UX_RESEARCH.md — изученные интерфейсы и принятые решения.
 
 Схема и неизменяемые SQL-миграции находятся в db/ и drizzle/. Обработчики — app/api/. Интерфейс — app/workspace.tsx и app/globals.css. Серверный запуск — worker/index.ts. Интеграцию Sites в сборке следует сохранять.
 
