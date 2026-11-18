@@ -17,7 +17,7 @@ export default function SignIn({ signInPath }: { signInPath: string }) {
     } catch { setError('Не удалось проверить подключение. Можно повторить проверку или перейти ко входу.'); }
     setPhase('ready');
   }
-  useEffect(() => { void checkSession(); }, []);
+  useEffect(() => { void checkSession(); const restore=()=>{setPhase('ready');};window.addEventListener('pageshow',restore);return()=>window.removeEventListener('pageshow',restore); }, []);
 
   if (phase === 'loading') return <main className="entry-loading" role="status" aria-live="polite"><div className="entry-symbol">✳︎</div><div className="brand">tutor<span>space</span></div><p>Проверяем подключение к вашему пространству</p><span className="loading-track"><i /></span></main>;
 
@@ -31,9 +31,9 @@ export default function SignIn({ signInPath }: { signInPath: string }) {
     </section>
     <section className="signin-form">
       <span className="entry-step">01 <i /> ВХОД В TUTORSPACE</span><h2>С возвращением</h2><p>Войдите в аккаунт и продолжайте<br />с того места, где остановились.</p>
-      {account && <label className="entry-account"><span>Ваш аккаунт ChatGPT</span><input aria-label="Ваш аккаунт ChatGPT" readOnly value={account} /><small><Check size={12} />Аккаунт найден. Подтвердите вход ниже.</small></label>}
-      <a href={signInPath} target="_top" className="primary entry-submit" onClick={() => setPhase('connecting')}>{phase === 'connecting' ? 'Открываем ваше пространство…' : account ? 'Войти в TutorSpace' : 'Продолжить с ChatGPT'}<ArrowRight size={18} /></a>
-      <div className="entry-private"><LockKeyhole size={14} /><span>Безопасный вход через ChatGPT.<br />Пароль вводится только на странице ChatGPT.</span></div>
+      {account && <label className="entry-account"><span>Ваш аккаунт ChatGPT</span><input aria-label="Ваш аккаунт ChatGPT" readOnly value={account} /><small><Check size={12} />Аккаунт найден. Можно продолжить работу.</small></label>}
+      <a href={account?'/overview':signInPath} target="_top" className="primary entry-submit" onClick={() => setPhase('connecting')}>{phase === 'connecting' ? 'Открываем ваше пространство…' : account ? 'Войти в TutorSpace' : 'Продолжить с ChatGPT'}<ArrowRight size={18} /></a>
+      {account&&<a className="entry-change-account" href="/signout-with-chatgpt?return_to=%2F" target="_top">Выйти из текущей сессии</a>}<div className="entry-private"><LockKeyhole size={14} /><span>Вход через ChatGPT.<br />Это приватная версия: доступ нужен каждому аккаунту отдельно.</span></div>
       {error && <div className="entry-error" role="alert"><p>{error}</p><button type="button" onClick={checkSession}>Повторить проверку</button></div>}
       <footer>Только ваши ученики. Только ваши записи.</footer>
     </section>
