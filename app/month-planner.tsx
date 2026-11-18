@@ -8,6 +8,7 @@ function monthDays(anchor:Date){const first=new Date(anchor.getFullYear(),anchor
 type Plan={date:string;studentId:string;lesson?:Row};
 export default function MonthPlanner({data,onOpen,onAddStudent,onSave,request=0}:{data:Data;onOpen:(id:string)=>void;onAddStudent:()=>void;onSave:(row:Row,id?:string,extra?:Row)=>Promise<Row>;request?:number}){
  const [anchor,setAnchor]=useState(new Date()),[view,setView]=useState('month'),[selected,setSelected]=useState(''),[drag,setDrag]=useState<{kind:'student'|'lesson';id:string}|null>(null),[over,setOver]=useState(''),[plan,setPlan]=useState<Plan|null>(null),[search,setSearch]=useState('');
+ useEffect(()=>{if(window.matchMedia('(max-width:700px)').matches)setView('list');},[]);
  const today=localDate(new Date()),days=useMemo(()=>monthDays(anchor),[anchor]),active=data.students.filter(s=>!s.archived),student=(id:string)=>data.students.find(s=>s.id===id);
  const lessons=[...data.lessons].sort((a,b)=>a.start.localeCompare(b.start)),month=lessons.filter(l=>{const d=new Date(l.start);return d.getMonth()===anchor.getMonth()&&d.getFullYear()===anchor.getFullYear()});
  function chooseDate(date:string,item=drag){setOver('');setDrag(null);if(item?.kind==='lesson'){const lesson=lessons.find(l=>l.id===item.id);if(lesson?.status==='planned')setPlan({date,studentId:lesson.studentId,lesson});return;}const id=item?.id||selected||active[0]?.id;if(!id){onAddStudent();return;}setPlan({date,studentId:id});}
