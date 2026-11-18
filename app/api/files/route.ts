@@ -1,0 +1,10 @@
+import { env } from 'cloudflare:workers';
+import { getChatGPTUser } from '../../chatgpt-auth';
+export const dynamic='force-dynamic';
+export async function GET(req:Request){const u=await getChatGPTUser();if(!u)return new Response('Требуется вход',{status:401});const id=new URL(req.url).searchParams.get('id');const row=await env.DB!.prepare('SELECT * FROM attachments WHERE id=? AND owner=?').bind(id,u.userId).first<{name:string;mime:string}>();if(!row)return new Response('Не найдено',{status:404});const file=await env.BUCKET!.get(`${u.userId}/${id}`);if(!file)return new Response('Не найдено',{status:404});return new Response(file.body,{headers:{'Content-Type':row.mime,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(row.name)}`,'X-Content-Type-Options':'nosniff','Cache-Control':'private, no-store'}})}
+export async function POST(req:Request){
+ const u=await getChatGPTUser();if(!u)return Response.json({error:'Требуется вход'},{status:401});if(req.headers.get('origin')&&req.headers.get('origin')!==new URL(req.url).origin)return Response.json({error:'Запрос отклонен'},{status:403});
+ try{const f=await req.formData(),file=f.get('file'),homeworkId=String(f.get('homeworkId')||'');if(!(file instanceof File)||!file.size||file.size>10*1024*1024)throw Error('Выберите файл размером до 10 МБ');const h=await env.DB!.prepare('SELECT id FROM homework WHERE id=? AND owner=?').bind(homeworkId,u.userId).first();if(!h)return Response.json({error:'Задание не найдено'},{status:404});
+  const id=crypto.randomUUID(),key=`${u.userId}/${id}`;await env.BUCKET!.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:file.type||'application/octet-stream'}});try{await env.DB!.prepare('INSERT INTO attachments(id,owner,homework_id,name,mime,size,created) VALUES(?,?,?,?,?,?,?)').bind(id,u.userId,homeworkId,file.name.slice(0,240),file.type||'application/octet-stream',file.size,new Date().toISOString()).run()}catch(e){await env.BUCKET!.delete(key);throw e}return Response.json({ok:true,id});
+ }catch(e){return Response.json({error:e instanceof Error?e.message:'Ошибка загрузки'},{status:400})}
+}

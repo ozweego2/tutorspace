@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1794966674098,
+      "tag": "0000_purple_omega_flight",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1794966732387,
+      "tag": "0001_tutor_integrity",
+      "breakpoints": true
+    }
+  ]
+}
