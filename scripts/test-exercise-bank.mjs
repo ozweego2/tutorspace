@@ -13,5 +13,5 @@ for(const e of exerciseBank){
  if(e.id.startsWith('FRAC-')){const [,n,d,m,k]=e.prompt.match(/(\d+)\/(\d+) \+ (\d+)\/(\d+)/).map(Number);const [a,b=1]=e.answer.split('/').map(Number);assert.equal(a*d*k,(n*k+m*d)*b);}
 }
 const draft=homeworkFromExercises([{id:'TEST',subject:'Математика',levels:['9 класс'],topic:'Тест',prompt:'Решите уравнение.',answer:'PRIVATE_SOLUTION'}]);
-assert.ok(draft.includes('[TEST]'));assert.ok(!draft.includes('PRIVATE_SOLUTION'));
+assert.ok(!draft.includes('[TEST]'));assert.ok(draft.startsWith('1. '));assert.ok(!draft.includes('PRIVATE_SOLUTION'));
 console.log(`${exerciseBank.length} exercises: unique IDs, valid generated maths, answers excluded from homework.`);

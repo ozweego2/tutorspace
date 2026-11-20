@@ -22,4 +22,4 @@ exerciseBank.push(
  {id:'PROB-1',subject:'Математика',levels:['7 класс','8 класс','9 класс'],topic:'Вероятность',prompt:'В коробке 3 красных, 5 синих и 2 зелёных шара. Случайно выбирают один шар. Найдите вероятность выбрать синий шар.',answer:'5/10 = 1/2.'}
 );
 const unique=new Map<string,Exercise>();for(const exercise of exerciseBank){const key=exercise.subject+'|'+exercise.prompt,existing=unique.get(key);if(existing)existing.levels=[...new Set([...existing.levels,...exercise.levels])];else unique.set(key,exercise);}exerciseBank.splice(0,exerciseBank.length,...unique.values());
-export function homeworkFromExercises(exercises:Exercise[]){return exercises.map((e,i)=>`${i+1}. [${e.id}] ${e.prompt}`).join('\n\n');}
+export function homeworkFromExercises(exercises:Exercise[]){return exercises.map((e,i)=>`${i+1}. ${e.prompt}`).join('\n\n');}

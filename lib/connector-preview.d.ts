@@ -7,6 +7,7 @@ declare module "virtual:sites-connector-preview" {
 // request-scoped capability through ctx.props.CONNECTORS in sites-worker.ts.
 declare namespace Cloudflare {
   interface Env {
+    TELEGRAM_BOT_TOKEN?: string;
     CONNECTORS?: import("./connector-contract.mjs").ConnectorBinding;
   }
 }

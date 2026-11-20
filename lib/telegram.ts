@@ -1,0 +1,25 @@
+import type {Row} from './tutor';
+export async function telegram(token:string,method:string,body:Row={}){const r=await fetch(`https://api.telegram.org/bot${token}/${method}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(12000)});const data=await r.json() as any;if(!data.ok)throw Error(data.error_code===409?'Этот бот уже подключён к другому приложению. Создайте отдельного бота для TutorSpace.':data.error_code===429?'Telegram просит подождать. Повторите позже.':data.error_code===403?'Ученик заблокировал бота. Попросите снова нажать «Старт».':'Telegram не принял запрос. Проверьте бота и его подключение.');return data.result;}
+export async function deliverHomework(db:D1Database,bucket:R2Bucket|undefined,token:string|undefined,owner:string,id:string){
+ const h=await db.prepare('SELECT * FROM homework WHERE id=? AND owner=?').bind(id,owner).first<Row>();if(!h||h.status==='draft'||h.delivery==='sent')return {sent:h?.delivery==='sent'};
+ const fail=async(message:string)=>{await db.prepare("UPDATE homework SET delivery='failed',delivery_error=? WHERE id=? AND owner=? AND delivery<>'sent'").bind(message,id,owner).run();return {sent:false,error:message};};
+ if(h.delivery==='sending')return {sent:false,error:'Отправка уже начата. Проверьте чат перед повторной отправкой.'};
+ if(!token)return fail('Бот ещё не подключён');const link=await db.prepare('SELECT chat_id FROM telegram_links WHERE student_id=? AND owner=?').bind(h.student_id,owner).first<Row>();if(!link?.chat_id)return fail('Подключите Telegram ученика в его карточке');
+ const claim=await db.prepare("UPDATE homework SET delivery='sending',delivery_error='' WHERE id=? AND owner=? AND delivery NOT IN ('sent','sending')").bind(id,owner).run();if(!claim.meta.changes)return {sent:false,error:'Отправка уже выполняется'};
+ let accepted=false;try{
+  // Send one Telegram request for the complete assignment. Never retry an uncertain network result automatically.
+  const files=await db.prepare('SELECT * FROM attachments WHERE homework_id=? AND owner=? ORDER BY created LIMIT 11').bind(id,owner).all<Row>();const documents:Row[]=files.results.map(f=>({...f,key:owner+'/'+f.id}));
+  if(h.document_id){const file=await db.prepare('SELECT * FROM library_files WHERE id=? AND owner=?').bind(h.document_id,owner).first<Row>();if(!file)throw Error('Файл из библиотеки не найден');documents.unshift({...file,key:owner+'/library/'+h.document_id});}
+  const message=`Домашнее задание\n${h.title}\n\n${h.description}${h.link?'\n\n'+h.link:''}\n\nСрок: ${new Date(h.due).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})} (Москва)`;let result;
+  if(documents.length){
+   if(!bucket)throw Error('Хранилище файлов недоступно');if(documents.length>10||documents.reduce((n,f)=>n+f.size,0)>30*1024*1024)throw Error('За раз можно отправить до 10 файлов общим размером до 30 МБ');
+   const form=new FormData();form.set('chat_id',link.chat_id);const caption=message.length<=1024?message:'Домашнее задание: '+h.title+'\nПолные инструкции — в файле Инструкция.txt.';const parts:{name:string;blob:Blob}[]=[];
+   for(const file of documents){const object=await bucket.get(file.key);if(!object)throw Error('Файл домашки не найден');parts.push({name:file.name,blob:new Blob([await object.arrayBuffer()],{type:file.mime})});}
+   if(message.length>1024)parts.push({name:'Инструкция.txt',blob:new Blob([message],{type:'text/plain;charset=utf-8'})});if(parts.length>10)throw Error('Сократите текст или число файлов: Telegram принимает до 10 вложений');
+   const method=parts.length===1?'sendDocument':'sendMediaGroup';if(parts.length===1){form.set('document',parts[0].blob,parts[0].name);form.set('caption',caption);}else{form.set('media',JSON.stringify(parts.map((p,i)=>({type:'document',media:'attach://file'+i,...(i===0?{caption}:{}),disable_content_type_detection:true}))));parts.forEach((p,i)=>form.set('file'+i,p.blob,p.name));}
+   const response=await fetch(`https://api.telegram.org/bot${token}/${method}`,{method:'POST',body:form,signal:AbortSignal.timeout(18000)}),v=await response.json() as any;if(!v.ok)throw Error('Telegram не принял файл. Проверьте чат и повторите отправку.');result=Array.isArray(v.result)?v.result[0]:v.result;
+  }else {if(message.length>4096)throw Error('Текст слишком длинный для Telegram. Прикрепите домашку файлом Word.');result=await telegram(token,'sendMessage',{chat_id:link.chat_id,text:message});}
+  accepted=true;
+  await db.prepare("UPDATE homework SET delivery='sent',delivery_error='',message_id=? WHERE id=? AND owner=?").bind(String(result.message_id),id,owner).run();return {sent:true};
+ }catch(e){const uncertain=accepted||e instanceof TypeError||e instanceof DOMException||e instanceof SyntaxError;if(uncertain){await db.prepare("UPDATE homework SET delivery_error=? WHERE id=? AND owner=?").bind('Ответ Telegram не получен. Проверьте чат: повторная отправка может создать копию.',id,owner).run();return {sent:false,error:'Ответ Telegram не получен. Проверьте чат.'};}return fail(e instanceof Error?e.message:'Не удалось отправить домашку');}
+}

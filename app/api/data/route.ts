@@ -1,3 +1,5 @@
+import {loadLibrary,courseContent} from '../../../lib/course-library';
+import {deliverHomework} from '../../../lib/telegram';
 import { env } from 'cloudflare:workers';
 import { getChatGPTUser } from '../../chatgpt-auth';
 import { tables, type Kind, type Row } from '../../../lib/tutor';
@@ -5,7 +7,7 @@ import {getStudyPlan,planContent} from '../../../lib/curriculum';
 import {recurrenceStarts} from '../../../lib/lesson-planning';
 export const dynamic='force-dynamic';
 const json=(x:any,status=200)=>Response.json(x,{status,headers:{'Cache-Control':'no-store'}});
-const mappings:Record<Kind,string[]>={students:['name','subject','planKey','phone','level','goal','notes','rate','archived'],lessons:['studentId','start','end','duration','subject','topic','status','price','notes','series','planKey','planIndex'],homework:['studentId','lessonId','title','description','due','status','review','reviewed','link'],progress:['studentId','date','topic','type','score','notes'],payments:['studentId','date','amount','notes']};
+const mappings:Record<Kind,string[]>={students:['name','subject','planKey','phone','level','goal','notes','rate','archived'],lessons:['studentId','start','end','duration','subject','topic','status','price','notes','series','planKey','planIndex'],homework:['studentId','lessonId','title','description','due','status','review','reviewed','link','grade','mistakes','total','libraryId','documentId'],progress:['studentId','date','topic','type','score','notes'],payments:['studentId','date','amount','notes']};
 const sqlName=(x:string)=>x.replace(/[A-Z]/g,c=>'_'+c.toLowerCase());
 function decode(r:Row){return Object.fromEntries(Object.entries(r).filter(([k])=>k!=='owner').map(([k,v])=>[k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase()),v]))}
 const need=(ok:any,message:string)=>{if(!ok)throw new Error(message)};
@@ -28,7 +30,7 @@ function validate(kind:Kind,d:Row,old:Row|null):Row{
  if(kind==='homework'){
   const title=text(d.title,200),due=iso(d.due);need(title,'Введите название задания');need(Date.parse(due)>=Date.parse(created),'Срок сдачи не может быть раньше выдачи задания');need(['draft','assigned','completed','reviewed'].includes(d.status),'Неизвестный статус задания');
   const review=text(d.review);need(d.status!=='reviewed'||review,'Добавьте комментарий к проверенной работе');const link=text(d.link,1000);need(!link||/^https?:\/\//i.test(link),'Ссылка должна начинаться с https:// или http://');
-  return {studentId,lessonId:d.lessonId||null,title,description:text(d.description,10000),due,status:d.status,review,reviewed:d.status==='reviewed'?(old?.reviewed||new Date().toISOString()):null,link};
+  return {grade:old?.grade??null,mistakes:old?.mistakes??null,total:old?.total??null,documentId:old?.documentId||null,libraryId:old?.libraryId||d.libraryId||null,studentId,lessonId:d.lessonId||null,title,description:text(d.description,10000),due,status:d.status,review,reviewed:d.status==='reviewed'?(old?.reviewed||new Date().toISOString()):null,link};
  }
  if(kind==='progress'){need(text(d.topic,200),'Введите тему');need(['Тест','Контрольная','Коллоквиум'].includes(d.type),'Выберите тип работы');return {...common,studentId,date:iso(d.date),topic:text(d.topic,200),type:d.type,score:integer(d.score,0,100,'Балл — целое число от 0 до 100')}}
  return {...common,studentId,date:iso(d.date),amount:integer(d.amount,1,100000000,'Сумма оплаты должна быть больше нуля')};
@@ -37,19 +39,25 @@ export async function GET(){
  const user=await getChatGPTUser();if(!user)return json({error:'Требуется вход'},401);
  try{const db=env.DB!,names=[...Object.keys(tables),'attachments'];const results=await db.batch(names.map(t=>db.prepare(`SELECT * FROM ${t} WHERE owner=?`).bind(user.userId)));
   const prefs=await db.prepare('SELECT * FROM preferences WHERE owner=?').bind(user.userId).first<Row>();
-  return json({...Object.fromEntries(names.map((t,i)=>[t,results[i].results.map(r=>decode(r as Row))])),preferences:prefs?decode(prefs):{name:user.fullName||'Преподаватель',rate:80000,accent:'forest',font:'sans',mode:'light'}});
+  const library=await loadLibrary(db,user.userId),links=await db.prepare('SELECT student_id,chat_id FROM telegram_links WHERE owner=?').bind(user.userId).all<Row>();
+  return json({library,telegramConfigured:!!(env as any).TELEGRAM_BOT_TOKEN,telegramStudents:links.results.filter(r=>r.chat_id).map(r=>r.student_id),...Object.fromEntries(names.map((t,i)=>[t,results[i].results.map(r=>decode(r as Row))])),preferences:prefs?decode(prefs):{name:user.fullName||'Преподаватель',rate:80000,accent:'forest',font:'sans',mode:'light'}});
  }catch(e){console.error(e);return json({error:'Не удалось загрузить записи. Попробуйте еще раз.'},500)}
 }
 export async function POST(req:Request){
  const user=await getChatGPTUser();if(!user)return json({error:'Требуется вход'},401);if(req.headers.get('origin')&&req.headers.get('origin')!==new URL(req.url).origin)return json({error:'Запрос отклонен'},403);
  try{
   const db=env.DB!,b=await req.json() as Row,owner=user.userId;
+  if(b.action==='reviewHomework'){
+   const id=text(b.id,80),h=await db.prepare('SELECT * FROM homework WHERE id=? AND owner=?').bind(id,owner).first<Row>();need(h,'Работа не найдена');need(['assigned','completed','reviewed'].includes(h!.status),'Сначала выдайте домашку');const d=b.data||{},grade=integer(d.grade,2,5,'Оценка — от 2 до 5'),total=integer(d.total,1,1000,'Укажите количество заданий'),mistakes=integer(d.mistakes,0,total,'Ошибок не может быть больше заданий'),review=text(d.review)||'Работа проверена',now=new Date().toISOString(),score=Math.round(100*(total-mistakes)/total);
+   await db.batch([db.prepare("UPDATE homework SET status='reviewed',grade=?,total=?,mistakes=?,review=?,reviewed=? WHERE id=? AND owner=?").bind(grade,total,mistakes,review,now,id,owner),db.prepare("INSERT INTO progress(id,owner,student_id,date,topic,type,score,notes,created) VALUES(?,?,?,?,?,'Тест',?,?,?) ON CONFLICT(id) DO UPDATE SET score=excluded.score,notes=excluded.notes,date=excluded.date").bind('review-'+id,owner,h!.student_id,now,h!.title,score,'Оценка '+grade+' · ошибок '+mistakes+' из '+total+'. '+review,now)]);return json({ok:true});
+  }
   if(b.action==='applyPlan'){
-   const student=await db.prepare('SELECT * FROM students WHERE id=? AND owner=?').bind(text(b.studentId,80),owner).first<Row>();need(student&&!student.archived,'Ученик не найден или находится в архиве');const key=text(b.planKey,80),plan=getStudyPlan(key);need(!key||plan,'Учебный план не найден');need(!plan||plan.subject===student!.subject,'Выберите план по предмету ученика');
+
+   const student=await db.prepare('SELECT * FROM students WHERE id=? AND owner=?').bind(text(b.studentId,80),owner).first<Row>();need(student&&!student.archived,'Ученик не найден или находится в архиве');const key=text(b.planKey,80),lib=await loadLibrary(db,owner),plan=lib.find(x=>x.courseKey===key);need(!key||plan,'Учебный план не найден');need(!plan||plan.subject===student!.subject,'Выберите план по предмету ученика');
    const operations=[db.prepare('UPDATE students SET plan_key=? WHERE id=? AND owner=?').bind(key,student!.id,owner)];let count=0,prepared=0;
-   if(plan){const future=await db.prepare("SELECT * FROM lessons WHERE owner=? AND student_id=? AND status='planned' AND start>=? AND topic='' ORDER BY start LIMIT 110").bind(owner,student!.id,new Date().toISOString()).all<Row>();const last=await db.prepare('SELECT MAX(plan_index) AS last FROM lessons WHERE owner=? AND student_id=? AND plan_key=?').bind(owner,student!.id,key).first<Row>();let index=(last?.last??-1)+1;
-    for(const lesson of future.results){const content=planContent(key,index)!;operations.push(db.prepare('UPDATE lessons SET topic=?,plan_key=?,plan_index=? WHERE id=? AND owner=?').bind(content.topic,key,index++,lesson.id,owner));count++;
-     if(b.prepareHomework){const existing=await db.prepare('SELECT id FROM homework WHERE owner=? AND lesson_id=? LIMIT 1').bind(owner,lesson.id).first();if(!existing){operations.push(db.prepare("INSERT INTO homework(id,owner,student_id,lesson_id,title,description,due,status,review,link,created) VALUES(?,?,?,?,?,?,?,'draft','','',?)").bind(crypto.randomUUID(),owner,student!.id,lesson.id,content.title,content.description,new Date(Date.parse(lesson.end)+48*3600000).toISOString(),new Date().toISOString()));prepared++;}}
+   if(plan){const future=await db.prepare("SELECT * FROM lessons WHERE owner=? AND student_id=? AND status='planned' AND start>=? AND topic='' ORDER BY start LIMIT 110").bind(owner,student!.id,new Date().toISOString()).all<Row>();const last=await db.prepare("SELECT MAX(plan_index) AS last FROM lessons WHERE owner=? AND student_id=? AND plan_key=? AND topic<>''").bind(owner,student!.id,key).first<Row>();let index=(last?.last??-1)+1;
+    for(const lesson of future.results){const slot=lesson.plan_key===key&&lesson.plan_index!=null?lesson.plan_index:index;const content=courseContent(lib,key,slot);if(!content)continue;index=Math.max(index,slot+1);operations.push(db.prepare('UPDATE lessons SET topic=?,plan_key=?,plan_index=? WHERE id=? AND owner=?').bind(content.title,key,slot,lesson.id,owner));count++;
+     if(b.prepareHomework){const existing=await db.prepare('SELECT id FROM homework WHERE owner=? AND lesson_id=? LIMIT 1').bind(owner,lesson.id).first();if(!existing){operations.push(db.prepare("INSERT INTO homework(id,owner,student_id,lesson_id,title,description,due,status,review,link,library_id,document_id,created) VALUES(?,?,?,?,?,?,?,'draft','','',?,?,?)").bind(crypto.randomUUID(),owner,student!.id,lesson.id,content.title,content.description,new Date(Math.max(Date.parse(lesson.end)+48*3600000,Date.now()+48*3600000)).toISOString(),content.id,content.homeworkFile||null,new Date().toISOString()));prepared++;}}
     }
    }await db.batch(operations);return json({ok:true,count,preparedHomework:prepared});
   }
@@ -63,6 +71,7 @@ export async function POST(req:Request){
   }
   const old=existing?decode(existing):null,d=validate(kind,b.data||{},old);
   if(kind!=='students'){const student=await db.prepare('SELECT * FROM students WHERE id=? AND owner=?').bind(d.studentId,owner).first<Row>();need(student,'Ученик не найден');need(!student!.archived||!!old,'Ученик в архиве. Восстановите его перед созданием записи.')}
+  if(kind==='homework'&&d.libraryId){const source=(await loadLibrary(db,owner)).find(x=>x.id===d.libraryId);need(source,'Урок в библиотеке не найден');if(!old||old.status==='draft')d.documentId=source!.homeworkFile||null;}
   if(kind==='homework'&&d.lessonId){const l=await db.prepare('SELECT id FROM lessons WHERE id=? AND owner=? AND student_id=?').bind(d.lessonId,owner,d.studentId).first();need(l,'Связанное занятие не найдено')}
   const rows:Row[]=[{...d,id,created:old?.created||new Date().toISOString()}];
   if(kind==='lessons'&&!old&&b.repeat){
@@ -72,21 +81,25 @@ export async function POST(req:Request){
 
   }
   if(kind==='lessons'&&d.status!=='cancelled'){for(const row of rows){const clash=await db.prepare('SELECT start FROM lessons WHERE owner=? AND id<>? AND status<>? AND start<? AND end>? LIMIT 1').bind(owner,row.id,'cancelled',row.end,row.start).first<{start:string}>();need(!clash,`Занятие пересекается с записью ${clash?new Date(clash.start).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}):''}`)}}
-  const preparedHomework:Row[]=[];
+  const preparedHomework:Row[]=[];const library=kind==='lessons'?await loadLibrary(db,owner):[];
   const planning=kind==='lessons'&&!old?b.planning:null;
-  if(planning?.planKey){const key=text(planning.planKey,80),plan=getStudyPlan(key);need(plan,'Учебный план не найден');need(plan!.subject===d.subject,'Учебный план относится к другому предмету');
+  if(planning?.planKey){const key=text(planning.planKey,80),plan=library.find(x=>x.courseKey===key);need(plan,'Учебный план не найден');need(plan!.subject===d.subject,'Учебный план относится к другому предмету');
    const last=await db.prepare("SELECT MAX(plan_index) AS last FROM lessons WHERE owner=? AND student_id=? AND plan_key=? AND status<>'cancelled'").bind(owner,d.studentId,key).first<Row>();let index=(last?.last??-1)+1;
-   for(const row of rows){const content=planContent(key,index)!;row.planKey=key;row.planIndex=index++;row.topic=content.topic;if(planning.prepareHomework)preparedHomework.push({id:crypto.randomUUID(),owner,studentId:d.studentId,lessonId:row.id,title:content.title,description:content.description,due:new Date(Math.max(Date.parse(row.end)+48*3600000,Date.now()+24*3600000)).toISOString(),status:'draft',review:'',reviewed:null,link:'',created:row.created});}
+   for(const row of rows){const content=courseContent(library,key,index);row.planKey=key;row.planIndex=index++;row.topic=content?.title||'';if(!content)continue;if(planning.prepareHomework)preparedHomework.push({id:crypto.randomUUID(),owner,studentId:d.studentId,lessonId:row.id,libraryId:content.id,documentId:content.homeworkFile||null,title:content.title,description:content.description,due:new Date(Math.max(Date.parse(row.end)+48*3600000,Date.now()+24*3600000)).toISOString(),status:'draft',review:'',reviewed:null,link:'',created:row.created});}
   }
   const statements=[];
   if(old){
    if(kind==='lessons'&&old.studentId!==d.studentId){const issued=await db.prepare("SELECT id FROM homework WHERE owner=? AND lesson_id=? AND status<>'draft' LIMIT 1").bind(owner,id).first();need(!issued,'У занятия есть выданное задание. Сначала уберите его привязку, чтобы не передать работу другому ученику.');}
    const cols=mappings[kind];statements.push(db.prepare(`UPDATE ${table} SET ${cols.map(c=>`${sqlName(c)}=?`).join(',')} WHERE id=? AND owner=?`).bind(...cols.map(c=>d[c]??null),id,owner));
-   if(kind==='lessons'){const changed=old.studentId!==d.studentId;statements.push(db.prepare("UPDATE homework SET student_id=?,due=?,title=CASE WHEN ? THEN ? ELSE title END,description=CASE WHEN ? THEN '' ELSE description END WHERE lesson_id=? AND owner=? AND status='draft'").bind(d.studentId,new Date(Math.max(Date.parse(d.end)+48*3600000,Date.now()+24*3600000)).toISOString(),changed?1:0,d.topic||'Практика после занятия',changed?1:0,id,owner));}
+   if(kind==='lessons'){const changed=old.studentId!==d.studentId;statements.push(db.prepare("UPDATE homework SET student_id=?,due=?,title=CASE WHEN ? THEN ? ELSE title END,description=CASE WHEN ? THEN '' ELSE description END,library_id=CASE WHEN ? THEN NULL ELSE library_id END,document_id=CASE WHEN ? THEN NULL ELSE document_id END WHERE lesson_id=? AND owner=? AND status='draft'").bind(d.studentId,new Date(Math.max(Date.parse(d.end)+48*3600000,Date.now()+24*3600000)).toISOString(),changed?1:0,d.topic||'Практика после занятия',changed?1:0,changed?1:0,changed?1:0,id,owner));}
   }else{const cols=['id','owner',...mappings[kind],'created'];statements.push(...rows.map(row=>db.prepare(`INSERT INTO ${table}(${cols.map(sqlName).join(',')}) VALUES(${cols.map(()=>'?').join(',')})`).bind(...cols.map(c=>c==='owner'?owner:row[c]??null))));}
   if(preparedHomework.length){const cols=['id','owner',...mappings.homework,'created'];statements.push(...preparedHomework.map(row=>db.prepare(`INSERT INTO homework(${cols.map(sqlName).join(',')}) VALUES(${cols.map(()=>'?').join(',')})`).bind(...cols.map(c=>row[c]??null))));}
   if(planning?.planKey)statements.push(db.prepare('UPDATE students SET plan_key=? WHERE id=? AND owner=?').bind(planning.planKey,d.studentId,owner));
-  await db.batch(statements);return json({ok:true,id,count:rows.length,preparedHomework:preparedHomework.length});
+  if(kind==='lessons'&&old?.status!=='done'&&d.status==='done')statements.push(db.prepare("UPDATE homework SET status='assigned',due=CASE WHEN due<? THEN ? ELSE due END WHERE lesson_id=? AND owner=? AND status='draft'").bind(new Date().toISOString(),new Date(Date.now()+48*3600000).toISOString(),id,owner));
+  await db.batch(statements);let delivery:any=null;
+  if(kind==='lessons'&&old?.status!=='done'&&d.status==='done'){const issued=await db.prepare("SELECT id FROM homework WHERE lesson_id=? AND owner=? AND status='assigned'").bind(id,owner).all<Row>();for(const h of issued.results)delivery=await deliverHomework(db,env.BUCKET,(env as any).TELEGRAM_BOT_TOKEN,owner,h.id);}
+  if(kind==='homework'&&d.status==='assigned'&&old?.status!=='assigned')delivery=await deliverHomework(db,env.BUCKET,(env as any).TELEGRAM_BOT_TOKEN,owner,id);
+  return json({ok:true,id,count:rows.length,preparedHomework:preparedHomework.length,delivery});
 
  }catch(e){const msg=e instanceof Error?e.message:'Ошибка сохранения';console.error(e);if(msg.includes('schedule_conflict'))return json({error:'Занятия пересекаются. Выберите другое время.'},409);if(msg.includes('D1_')||msg.includes('SQLITE_'))return json({error:'Изменение не сохранено. Обновите страницу и повторите.'},409);return json({error:msg},400)}
 }

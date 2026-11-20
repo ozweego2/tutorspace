@@ -1,0 +1,1 @@
+ALTER TABLE `homework` ADD `document_id` text;

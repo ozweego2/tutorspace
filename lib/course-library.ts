@@ -1,0 +1,5 @@
+import {studyPlans} from './curriculum';
+import type {Row} from './tutor';
+export const starterLibrary=()=>studyPlans.flatMap(p=>p.steps.map((s,i)=>({id:`${p.key}-${i}`,courseKey:p.key,courseTitle:p.title,subject:p.subject,levels:p.levels,level:p.levels[0],position:i,title:s.topic,description:s.exercises.map((x,n)=>`${n+1}. ${x}`).join('\n'),lessonFile:'',homeworkFile:'',answersFile:'',boardLink:'',starter:1})));
+export async function loadLibrary(db:D1Database,owner:string):Promise<Row[]>{const saved=await db.prepare('SELECT * FROM library WHERE owner=? ORDER BY position,id').bind(owner).all<Row>();const decode=(r:Row)=>Object.fromEntries(Object.entries(r).filter(([k])=>k!=='owner').map(([k,v])=>[k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase()),v]));const base=starterLibrary();const rows:Row[]=saved.results.map(r=>({...base.find(x=>x.id===r.id),...decode(r)})),ids=new Set(rows.map(r=>r.id));return [...starterLibrary().filter(r=>!ids.has(r.id)),...rows].sort((a,b)=>a.position-b.position);}
+export function courseContent(rows:Row[],key:string,index:number){return rows.filter(r=>r.courseKey===key).sort((a,b)=>a.position-b.position)[index]||null;}
